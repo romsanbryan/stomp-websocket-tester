@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STOMP WebSocket Tester</title>
+  <meta name="description" content="Lightweight browser-based tool for testing STOMP over WebSocket endpoints (Spring Boot).">
+  <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+  <style>
+    :root { --bg:#1e1e1e; --panel:#2d2d2d; --border:#3e3e3e; --text:#d4d4d4; --blue:#569cd6; --cyan:#9cdcfe; --green:#4ec94e; --red:#f44747; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--bg); color: var(--text); padding: 24px; max-width: 900px; margin: 0 auto; }
+    h1 { color: var(--blue); font-size: 1.3rem; margin-bottom: 16px; }
+    .row { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+    label { color: var(--cyan); width: 80px; flex-shrink: 0; }
+    input, textarea { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 4px; flex: 1; min-width: 0; font-family: inherit; }
+    input:focus, textarea:focus { outline: 1px solid var(--blue); }
+    button { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-family: inherit; font-weight: bold; }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    #btnConnect { background: var(--green); color: #000; }
+    #btnDisconnect { background: var(--red); color: #fff; }
+    #btnSend { background: var(--blue); color: #fff; }
+    #btnClear { background: #555; color: #fff; }
+    #log { background: #111; border: 1px solid var(--border); border-radius: 4px; padding: 12px; height: 360px; overflow-y: auto; font-size: 13px; line-height: 1.6; margin-top: 16px; white-space: pre-wrap; word-break: break-word; }
+    .recv { color: var(--green); } .sent { color: var(--blue); } .info { color: var(--cyan); } .error { color: var(--red); }
+    .status { font-size: 12px; margin-left: 8px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #555; margin-right: 6px; }
+    .dot.connected { background: var(--green); }
+    .hint { font-size: 12px; color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+
+<h1>STOMP WebSocket Tester</h1>
+
+<div class="row"><label for="url">URL</label><input id="url" value="ws://localhost:5010/ws" autocomplete="off"></div>
+<div class="row"><label for="token">Bearer</label><input id="token" placeholder="(optional) JWT, sent as Authorization header" autocomplete="off"></div>
+<div class="row"><label for="topic">Subscribe</label><input id="topic" value="/topic/greetings" autocomplete="off"></div>
+<div class="row"><label for="destination">Destination</label><input id="destination" value="/app/hello" autocomplete="off"></div>
+<div class="row"><label for="message">Message</label><textarea id="message" rows="2">Hello from the tester</textarea></div>
+
+<div class="row">
+  <button id="btnConnect">Connect</button>
+  <button id="btnDisconnect" disabled>Disconnect</button>
+  <button id="btnSend" disabled>Send</button>
+  <button id="btnClear">Clear log</button>
+  <span class="status"><span class="dot" id="dot"></span><span id="statusText">Disconnected</span></span>
+</div>
+<p class="hint">Ctrl/Cmd + Enter in the message to send. If your endpoint uses SockJS, try <code>/ws/websocket</code>.</p>
+
+<div id="log" role="log" aria-live="polite"></div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  let client = null;
+
+  function log(msg, cls) {
+    const line = document.createElement('div');
+    line.className = cls;
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`; // textContent: evita inyección HTML
+    $('log').appendChild(line);
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+
+  function setConnected(on) {
+    $('btnConnect').disabled = on;
+    $('btnDisconnect').disabled = !on;
+    $('btnSend').disabled = !on;
+    $('dot').className = 'dot' + (on ? ' connected' : '');
+    $('statusText').textContent = on ? 'Connected' : 'Disconnected';
+  }
+
+  function connect() {
+    const url = $('url').value.trim();
+    const topic = $('topic').value.trim();
+    const token = $('token').value.trim();
+
+    client = new StompJs.Client({
+      brokerURL: url,
+      connectHeaders: token ? { Authorization: `Bearer ${token}` } : {},
+      reconnectDelay: 0,
+      onConnect: () => {
+        setConnected(true);
+        log(`Connected a ${url}`, 'info');
+        client.subscribe(topic, m => log(`RECV → ${m.body}`, 'recv'));
+        log(`Subscribed to ${topic}`, 'info');
+      },
+      onStompError: f => log(`STOMP ERROR: ${f.headers.message || ''} ${f.body || ''}`, 'error'),
+      onWebSocketError: () => log(`Could not open WebSocket at ${url}`, 'error'),
+      onWebSocketClose: () => { setConnected(false); log('Connection closed', 'info'); }
+    });
+    log(`Connecting to ${url}...`, 'info');
+    client.activate();
+  }
+
+  function disconnect() { if (client) client.deactivate(); }
+
+  function sendMessage() {
+    if (!client || !client.connected) return;
+    const destination = $('destination').value.trim();
+    const body = $('message').value;
+    client.publish({ destination, body });
+    log(`SENT → ${destination} : ${body}`, 'sent');
+  }
+
+  $('btnConnect').addEventListener('click', connect);
+  $('btnDisconnect').addEventListener('click', disconnect);
+  $('btnSend').addEventListener('click', sendMessage);
+  $('btnClear').addEventListener('click', () => { $('log').textContent = ''; });
+  $('message').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') sendMessage(); });
+</script>
+</body>
+</html>
